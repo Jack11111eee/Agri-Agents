@@ -1,0 +1,175 @@
+{
+  "schema_version": "1.0",
+  "crop": "水稻",
+  "source_note": "种子事实用于检索契约测试，不替代当地植保部门和产品标签的用药核验。",
+  "diseases": [
+    {
+      "id": "disease:rice-blast",
+      "name": "稻瘟病",
+      "category": "病害",
+      "symptoms": [
+        {
+          "id": "symptom:rice-blast-brown-lesions",
+          "name": "叶片出现褐色病斑",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.95
+        },
+        {
+          "id": "symptom:rice-blast-spindle-lesions",
+          "name": "叶片出现梭形病斑",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.95
+        }
+      ],
+      "controls": [
+        {
+          "id": "control:rice-blast-resistant-variety",
+          "name": "选用抗病品种并加强肥水管理",
+          "description": "结合品种抗性和田间管理降低病害发生风险。",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.91,
+          "pesticides": [
+            {
+              "id": "pesticide:tricyclazole",
+              "name": "三环唑",
+              "active_ingredient": "三环唑",
+              "safety_note": "仅作种子图谱中的药剂实体；使用前必须核对当地登记标签、适用作物和安全间隔期。",
+              "source": "农业农村部农药登记信息与全国农业技术推广服务中心防控方案",
+              "version": "2024",
+              "confidence": 0.88
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "disease:rice-sheath-blight",
+      "name": "水稻纹枯病",
+      "category": "病害",
+      "symptoms": [
+        {
+          "id": "symptom:sheath-blight-cloud-lesions",
+          "name": "叶鞘出现云纹状病斑",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.95
+        },
+        {
+          "id": "symptom:sheath-blight-yellowing",
+          "name": "植株下部叶片发黄",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.92
+        }
+      ],
+      "controls": [
+        {
+          "id": "control:sheath-blight-drainage",
+          "name": "合理密植并加强排水管理",
+          "description": "通过改善群体通风透光和田间湿度管理降低病害压力。",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.91,
+          "pesticides": [
+            {
+              "id": "pesticide:jinggangmycin",
+              "name": "井冈霉素",
+              "active_ingredient": "井冈霉素",
+              "safety_note": "仅作种子图谱中的药剂实体；使用前必须核对当地登记标签、适用作物和安全间隔期。",
+              "source": "农业农村部农药登记信息与全国农业技术推广服务中心防控方案",
+              "version": "2024",
+              "confidence": 0.88
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "disease:rice-bacterial-leaf-blight",
+      "name": "水稻白叶枯病",
+      "category": "病害",
+      "symptoms": [
+        {
+          "id": "symptom:bacterial-blight-yellow-white-stripe",
+          "name": "叶缘出现黄白色条斑",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.93
+        },
+        {
+          "id": "symptom:bacterial-blight-leaf-wilt",
+          "name": "叶片失水卷曲",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.90
+        }
+      ],
+      "controls": [
+        {
+          "id": "control:bacterial-blight-field-hygiene",
+          "name": "选用抗病品种并减少串灌传播",
+          "description": "结合抗性品种和田间卫生管理，减少病原随水传播。",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.90,
+          "pesticides": [
+            {
+              "id": "pesticide:bismerthiazol",
+              "name": "噻菌铜",
+              "active_ingredient": "噻菌铜",
+              "safety_note": "仅作种子图谱中的药剂实体；使用前必须核对当地登记标签、适用作物和安全间隔期。",
+              "source": "农业农村部农药登记信息与全国农业技术推广服务中心防控方案",
+              "version": "2024",
+              "confidence": 0.84
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "disease:rice-planthopper",
+      "name": "稻飞虱",
+      "category": "虫害",
+      "symptoms": [
+        {
+          "id": "symptom:planthopper-base-cluster",
+          "name": "稻株基部群集小虫",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.94
+        },
+        {
+          "id": "symptom:planthopper-hopperburn",
+          "name": "植株黄化并成片倒伏",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.92
+        }
+      ],
+      "controls": [
+        {
+          "id": "control:planthopper-monitoring",
+          "name": "加强监测并保护田间天敌",
+          "description": "依据监测结果实施综合防控，避免不必要的广谱用药。",
+          "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+          "version": "2024",
+          "confidence": 0.91,
+          "pesticides": [
+            {
+              "id": "pesticide:pymetrozine",
+              "name": "吡蚜酮",
+              "active_ingredient": "吡蚜酮",
+              "safety_note": "仅作种子图谱中的药剂实体；使用前必须核对当地登记标签、适用作物和安全间隔期。",
+              "source": "农业农村部农药登记信息与全国农业技术推广服务中心防控方案",
+              "version": "2024",
+              "confidence": 0.86
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
