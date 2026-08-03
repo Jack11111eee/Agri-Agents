@@ -5,10 +5,15 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping, Sequence, TypeVar
+from typing import Any, Mapping, Sequence
 
-from app.kg.retrieval import RetrievalResult, RetrievalStatus, retrieve
+from app.kg.retrieval import GraphNode, RetrievalResult, RetrievalStatus, retrieve
 from app.llm.protocol import LLMClient
+
+# The provider may only pick control/pesticide entities from the retrieved
+# subgraph. Every user-visible string is rendered by this module from stored
+# graph properties, so provider text can never carry a safety-sensitive claim.
+SELECTABLE_NODE_TYPES = ("ControlMethod", "Pesticide")
 
 
 class DiagnosisStatus(str, Enum):
@@ -56,6 +61,13 @@ class ModelSuggestion:
 
 
 @dataclass(frozen=True)
+class GeneratedSelection:
+    """The only thing a provider is allowed to return: graph entity IDs."""
+
+    referenced_entity_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class DiagnosisResult:
     status: DiagnosisStatus
     reason: str
@@ -85,9 +97,11 @@ def diagnose(
     *,
     llm_client: LLMClient | None = None,
 ) -> DiagnosisResult:
-    """Retrieve evidence, short-circuit abstention, and ground LLM output.
+    """Retrieve evidence, short-circuit abstention, and render graph-only text.
 
     Invalid and abstained requests return before the LLM client is inspected.
+    On a hit the provider may only select graph entity IDs; the diagnosis and
+    every suggestion string are rendered here from stored subgraph properties.
     Provider and retrieval failures deliberately bubble so callers never receive
     model content disguised as a successful partial diagnosis.
     """
@@ -110,32 +124,27 @@ def diagnose(
         raise LLMClientRequiredError("检索命中后必须提供 LLM client")
 
     generated = llm_client.generate(_build_messages(retrieval))
-    payload = _parse_generation(generated)
-    diagnosis = _parse_diagnosis(payload["diagnosis"])
-    suggestions = _parse_suggestions(payload["model_suggestions"])
+    selections = _parse_selections(_parse_generation(generated)["model_suggestions"])
 
-    allowed_ids = frozenset(node.node_id for node in retrieval.subgraph.nodes)
-    grounded_diagnosis, diagnosis_rejections = _ground_diagnosis(
-        diagnosis,
-        allowed_ids,
-    )
-    grounded_suggestions, suggestion_rejections = _ground_suggestions(
-        suggestions,
-        allowed_ids,
-    )
+    selectable_nodes = {
+        node.node_id: node
+        for node in retrieval.subgraph.nodes
+        if node.node_type in SELECTABLE_NODE_TYPES
+    }
+    suggestions, rejections = _render_suggestions(selections, selectable_nodes)
 
     return DiagnosisResult(
         status=DiagnosisStatus.DIAGNOSED,
         reason=retrieval.reason,
         matched_symptoms=list(retrieval.matched_symptoms),
-        diagnosis=grounded_diagnosis,
+        diagnosis=_build_diagnosis(retrieval),
         verified_knowledge=[node.to_dict() for node in retrieval.subgraph.nodes],
-        model_suggestions=grounded_suggestions,
+        model_suggestions=suggestions,
         evidence_chain=[
             relationship.to_dict()
             for relationship in retrieval.subgraph.relationships
         ],
-        grounding_rejections=diagnosis_rejections + suggestion_rejections,
+        grounding_rejections=rejections,
     )
 
 
@@ -147,17 +156,21 @@ def _build_messages(retrieval: RetrievalResult) -> list[dict[str, str]]:
             for relationship in retrieval.subgraph.relationships
         ],
         "allowed_entity_ids": sorted(
-            node.node_id for node in retrieval.subgraph.nodes
+            node.node_id
+            for node in retrieval.subgraph.nodes
+            if node.node_type in SELECTABLE_NODE_TYPES
         ),
     }
     return [
         {
             "role": "system",
             "content": (
-                "你是农业诊断生成器，只能依据用户消息中的检索子图。"
-                "只返回 JSON 对象，其中 diagnosis 是包含 text 与 "
-                "referenced_entity_ids 的对象，model_suggestions 是同结构对象数组。"
-                "所有引用必须来自 allowed_entity_ids，不得添加剂量、施药时机或子图外事实。"
+                "你是农业诊断的防治措施选择器，只能依据用户消息中的检索子图。"
+                "只返回 JSON 对象，唯一允许的顶层字段是 model_suggestions；"
+                "数组每项唯一允许的字段是 "
+                "referenced_entity_ids，且至少引用一个 allowed_entity_ids 中的 "
+                "ControlMethod 或 Pesticide 实体。不得返回 diagnosis、text、剂量、"
+                "施药时机、安全间隔期或任何子图外事实；展示文本由服务器生成。"
             ),
         },
         {
@@ -183,41 +196,40 @@ def _parse_generation(generated: object) -> Mapping[str, object]:
     if not isinstance(payload, dict):
         raise LLMOutputError("LLM JSON 顶层必须是对象")
 
-    missing = {"diagnosis", "model_suggestions"} - payload.keys()
-    if missing:
-        raise LLMOutputError(f"LLM JSON 缺少字段: {', '.join(sorted(missing))}")
+    # A diagnosis or free-text field is a contract violation, not something to
+    # filter: accepting it would let valid IDs launder an unsupported claim.
+    unexpected = payload.keys() - {"model_suggestions"}
+    if unexpected:
+        raise LLMOutputError(
+            f"LLM JSON 含未授权顶层字段: {', '.join(sorted(unexpected))}"
+        )
+    if "model_suggestions" not in payload:
+        raise LLMOutputError("LLM JSON 缺少字段: model_suggestions")
 
     return payload
 
 
-def _parse_diagnosis(raw_item: object) -> DiagnosisStatement:
-    return _parse_item(raw_item, "diagnosis", DiagnosisStatement)
-
-
-def _parse_suggestions(raw_items: object) -> list[ModelSuggestion]:
+def _parse_selections(raw_items: object) -> list[GeneratedSelection]:
     if not isinstance(raw_items, list):
         raise LLMOutputError("LLM JSON 字段 model_suggestions 必须是数组")
     return [
-        _parse_item(item, f"model_suggestions[{index}]", ModelSuggestion)
+        _parse_selection(item, f"model_suggestions[{index}]")
         for index, item in enumerate(raw_items)
     ]
 
 
-GeneratedItem = TypeVar("GeneratedItem", DiagnosisStatement, ModelSuggestion)
-
-
-def _parse_item(
-    raw_item: object,
-    field: str,
-    item_type: type[GeneratedItem],
-) -> GeneratedItem:
+def _parse_selection(raw_item: object, field: str) -> GeneratedSelection:
     if not isinstance(raw_item, dict):
         raise LLMOutputError(f"LLM JSON 字段 {field} 必须是对象")
 
-    text = raw_item.get("text")
+    allowed_fields = {"referenced_entity_ids"}
+    unexpected = raw_item.keys() - allowed_fields
+    if unexpected:
+        raise LLMOutputError(
+            f"{field} 含未授权字段: {', '.join(sorted(unexpected))}"
+        )
+
     entity_ids = raw_item.get("referenced_entity_ids")
-    if not isinstance(text, str) or not text.strip():
-        raise LLMOutputError(f"{field}.text 必须是非空字符串")
     if (
         not isinstance(entity_ids, list)
         or not entity_ids
@@ -230,35 +242,63 @@ def _parse_item(
             f"{field}.referenced_entity_ids 必须是非空字符串数组"
         )
 
-    return item_type(
-        text=text.strip(),
-        referenced_entity_ids=tuple(entity_ids),
+    return GeneratedSelection(referenced_entity_ids=tuple(entity_ids))
+
+
+def _build_diagnosis(retrieval: RetrievalResult) -> DiagnosisStatement:
+    disease_nodes = [
+        node for node in retrieval.subgraph.nodes if node.node_type == "Disease"
+    ]
+    names = "、".join(str(node.properties.get("name", "")) for node in disease_nodes)
+    return DiagnosisStatement(
+        text=f"图谱匹配到可能相关病害：{names}",
+        referenced_entity_ids=tuple(node.node_id for node in disease_nodes),
     )
 
 
-def _ground_diagnosis(
-    diagnosis: DiagnosisStatement,
-    allowed_ids: frozenset[str],
-) -> tuple[DiagnosisStatement | None, int]:
-    if _is_grounded(diagnosis, allowed_ids):
-        return diagnosis, 0
-    return None, 1
-
-
-def _ground_suggestions(
-    suggestions: Sequence[ModelSuggestion],
-    allowed_ids: frozenset[str],
+def _render_suggestions(
+    selections: Sequence[GeneratedSelection],
+    selectable_nodes: Mapping[str, GraphNode],
 ) -> tuple[list[ModelSuggestion], int]:
-    grounded = [
-        suggestion
-        for suggestion in suggestions
-        if _is_grounded(suggestion, allowed_ids)
-    ]
-    return grounded, len(suggestions) - len(grounded)
+    suggestions: list[ModelSuggestion] = []
+    rejections = 0
+    for selection in selections:
+        nodes = [
+            selectable_nodes[entity_id]
+            for entity_id in selection.referenced_entity_ids
+            if entity_id in selectable_nodes
+        ]
+        # Any out-of-subgraph or non-selectable ID invalidates the whole item;
+        # partially rendering it would imply support the graph does not give.
+        if len(nodes) != len(selection.referenced_entity_ids) or not nodes:
+            rejections += 1
+            continue
+        suggestions.append(
+            ModelSuggestion(
+                text="；".join(_render_node(node) for node in nodes),
+                referenced_entity_ids=selection.referenced_entity_ids,
+            )
+        )
+    return suggestions, rejections
 
 
-def _is_grounded(
-    item: DiagnosisStatement | ModelSuggestion,
-    allowed_ids: frozenset[str],
-) -> bool:
-    return set(item.referenced_entity_ids).issubset(allowed_ids)
+def _render_node(node: GraphNode) -> str:
+    """Render one graph node using only its stored properties."""
+
+    properties = node.properties
+    name = str(properties.get("name", "")).strip()
+    if node.node_type == "Pesticide":
+        parts = [f"图谱登记药剂：{name}"]
+        ingredient = str(properties.get("active_ingredient", "")).strip()
+        if ingredient:
+            parts.append(f"有效成分：{ingredient}")
+        safety_note = str(properties.get("safety_note", "")).strip()
+        if safety_note:
+            parts.append(f"安全提示：{safety_note}")
+        return "；".join(parts)
+
+    parts = [f"图谱防治措施：{name}"]
+    description = str(properties.get("description", "")).strip()
+    if description:
+        parts.append(description)
+    return "；".join(parts)

@@ -44,25 +44,15 @@ def graph():
     store.close()
 
 
-def llm_json(
-    *,
-    diagnosis_ids: list[str] | None = None,
-    suggestions: list[dict[str, object]] | None = None,
-) -> str:
+def llm_json(*, suggestions: list[dict[str, object]] | None = None) -> str:
+    """Build a provider response under the ID-only contract (D006)."""
+
     return json.dumps(
         {
-            "diagnosis": {
-                "text": "检索证据支持稻瘟病诊断。",
-                "referenced_entity_ids": diagnosis_ids
-                or ["disease:rice-blast", "symptom:rice-blast-brown-lesions"],
-            },
             "model_suggestions": suggestions
             if suggestions is not None
             else [
-                {
-                    "text": "可参考图谱中的抗病品种和肥水管理措施。",
-                    "referenced_entity_ids": ["control:rice-blast-resistant-variety"],
-                }
+                {"referenced_entity_ids": ["control:rice-blast-resistant-variety"]}
             ],
         },
         ensure_ascii=False,
@@ -113,6 +103,7 @@ def test_hit_calls_llm_once_and_assembles_grounded_layers_from_subgraph(graph):
     assert len(llm.calls) == 1
     assert [message["role"] for message in llm.calls[0]] == ["system", "user"]
     assert "只能依据" in llm.calls[0][0]["content"]
+    assert "不得返回 diagnosis、text" in llm.calls[0][0]["content"]
     assert "subgraph" in llm.calls[0][1]["content"]
 
     allowed_ids = {node.node_id for node in retrieval_result.subgraph.nodes}
@@ -132,44 +123,101 @@ def test_hit_calls_llm_once_and_assembles_grounded_layers_from_subgraph(graph):
         assert set(relationship["properties"]) == {"source", "version", "confidence"}
 
 
-def test_grounding_filters_only_out_of_subgraph_suggestions(graph):
-    safe_text = "可参考图谱中的抗病品种和肥水管理措施。"
-    unsafe_text = "使用图谱外药剂甲。"
+def test_valid_entity_ids_cannot_launder_free_text_claims(graph):
+    """HIGH-1: a real pesticide ID must not carry a fabricated dose/timing."""
+
+    fabricated = "三环唑每亩 100 克，抽穗期喷施，安全间隔期 7 天。"
+    llm = StubLLM(
+        response=json.dumps(
+            {
+                "model_suggestions": [
+                    {
+                        "text": fabricated,
+                        "referenced_entity_ids": ["pesticide:tricyclazole"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    with pytest.raises(LLMOutputError) as exc_info:
+        diagnose(graph.connection, "叶片出现褐色病斑", llm_client=llm)
+
+    # The rejection must not echo the prescription back to any caller or log.
+    assert fabricated not in str(exc_info.value)
+
+
+def test_provider_diagnosis_field_is_rejected_outright(graph):
+    """HIGH-1: the provider has no authority to state a diagnosis."""
+
+    unsafe_text = "图谱外病害乙是最终诊断。"
+    llm = StubLLM(
+        response=json.dumps(
+            {
+                "diagnosis": {
+                    "text": unsafe_text,
+                    "referenced_entity_ids": ["disease:rice-blast"],
+                },
+                "model_suggestions": [],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    with pytest.raises(LLMOutputError) as exc_info:
+        diagnose(graph.connection, "叶片出现褐色病斑", llm_client=llm)
+
+    assert unsafe_text not in str(exc_info.value)
+
+
+def test_grounding_filters_out_of_subgraph_selections_and_renders_graph_facts(graph):
     llm = StubLLM(
         response=llm_json(
             suggestions=[
-                {
-                    "text": safe_text,
-                    "referenced_entity_ids": ["control:rice-blast-resistant-variety"],
-                },
-                {
-                    "text": unsafe_text,
-                    "referenced_entity_ids": ["pesticide:not-in-subgraph"],
-                },
+                {"referenced_entity_ids": ["control:rice-blast-resistant-variety"]},
+                {"referenced_entity_ids": ["pesticide:not-in-subgraph"]},
             ]
         )
     )
 
     result = diagnose(graph.connection, "叶片出现褐色病斑", llm_client=llm)
 
-    assert [item.text for item in result.model_suggestions] == [safe_text]
+    assert len(result.model_suggestions) == 1
+    assert "选用抗病品种并加强肥水管理" in result.model_suggestions[0].text
     assert result.grounding_rejections == 1
-    assert unsafe_text not in json.dumps(result.to_dict(), ensure_ascii=False)
+    assert "not-in-subgraph" not in json.dumps(result.to_dict(), ensure_ascii=False)
 
 
-def test_grounding_drops_an_ungrounded_diagnosis_but_keeps_verified_knowledge(graph):
-    unsafe_text = "图谱外病害乙是最终诊断。"
-    raw = json.loads(llm_json(diagnosis_ids=["disease:not-in-subgraph"]))
-    raw["diagnosis"]["text"] = unsafe_text
-    llm = StubLLM(response=json.dumps(raw, ensure_ascii=False))
+def test_pesticide_selection_renders_only_stored_safety_facts(graph):
+    result = diagnose(
+        graph.connection,
+        "叶片出现褐色病斑",
+        llm_client=StubLLM(
+            response=llm_json(
+                suggestions=[{"referenced_entity_ids": ["pesticide:tricyclazole"]}]
+            )
+        ),
+    )
 
-    result = diagnose(graph.connection, "叶片出现褐色病斑", llm_client=llm)
+    text = result.model_suggestions[0].text
+    assert "三环唑" in text
+    assert "使用前必须核对当地登记标签、适用作物和安全间隔期" in text
+    # No dose or timing exists in the graph, so none may appear in the output.
+    assert "每亩" not in text
+    assert "抽穗期" not in text
 
-    assert result.status is DiagnosisStatus.DIAGNOSED
-    assert result.diagnosis is None
-    assert result.verified_knowledge
-    assert result.grounding_rejections == 1
-    assert unsafe_text not in json.dumps(result.to_dict(), ensure_ascii=False)
+
+def test_diagnosis_is_deterministically_rendered_from_retrieved_disease(graph):
+    result = diagnose(
+        graph.connection,
+        "叶片出现梭形病斑",
+        llm_client=StubLLM(response=llm_json(suggestions=[])),
+    )
+
+    assert result.diagnosis is not None
+    assert result.diagnosis.text == "图谱匹配到可能相关病害：稻瘟病"
+    assert result.diagnosis.referenced_entity_ids == ("disease:rice-blast",)
 
 
 @pytest.mark.parametrize(
@@ -177,13 +225,9 @@ def test_grounding_drops_an_ungrounded_diagnosis_but_keeps_verified_knowledge(gr
     [
         "not-json",
         "{}",
-        json.dumps(
-            {
-                "diagnosis": {"text": "缺少引用", "referenced_entity_ids": []},
-                "model_suggestions": [],
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps({"model_suggestions": [{"referenced_entity_ids": []}]}),
+        json.dumps({"model_suggestions": [{}]}),
+        json.dumps({"model_suggestions": "not-a-list"}),
     ],
 )
 def test_malformed_llm_output_raises_explicit_error(graph, response):

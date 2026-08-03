@@ -40,22 +40,12 @@ class StubLLM:
 
 
 def grounded_response() -> str:
+    """A provider response under the ID-only contract (D006)."""
+
     return json.dumps(
         {
-            "diagnosis": {
-                "text": "检索证据与稻瘟病相符。",
-                "referenced_entity_ids": [
-                    "disease:rice-blast",
-                    "symptom:rice-blast-brown-lesions",
-                ],
-            },
             "model_suggestions": [
-                {
-                    "text": "依据图谱中的防治节点安排后续核验。",
-                    "referenced_entity_ids": [
-                        "control:rice-blast-resistant-variety",
-                    ],
-                }
+                {"referenced_entity_ids": ["control:rice-blast-resistant-variety"]}
             ],
         },
         ensure_ascii=False,
@@ -73,11 +63,14 @@ def test_post_diagnose_returns_stable_diagnosed_contract() -> None:
     payload = response.json()
     assert set(payload) == EXPECTED_RESPONSE_FIELDS
     assert payload["status"] == "DIAGNOSED"
-    assert payload["diagnosis"]["text"] == "检索证据与稻瘟病相符。"
+    assert payload["diagnosis"]["text"] == "图谱匹配到可能相关病害：稻瘟病"
     assert payload["verified_knowledge"]
     assert payload["model_suggestions"] == [
         {
-            "text": "依据图谱中的防治节点安排后续核验。",
+            "text": (
+                "图谱防治措施：选用抗病品种并加强肥水管理；"
+                "结合品种抗性和田间管理降低病害发生风险。"
+            ),
             "referenced_entity_ids": ["control:rice-blast-resistant-variety"],
             "authoritative": False,
             "label": "模型补充建议",
