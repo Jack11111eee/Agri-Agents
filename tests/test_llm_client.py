@@ -24,6 +24,10 @@ class FakeCompletions:
 class FakeSDKClient:
     def __init__(self, completions: FakeCompletions) -> None:
         self.chat = SimpleNamespace(completions=completions)
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 def completion_response(content: str) -> SimpleNamespace:
@@ -112,6 +116,15 @@ def test_default_client_reads_key_from_environment_and_sets_transport_limits(
         "timeout": client_module.DEFAULT_TIMEOUT_SECONDS,
         "max_retries": client_module.DEFAULT_MAX_RETRIES,
     }
+
+
+def test_client_close_releases_injected_sdk_transport(llm_modules):
+    sdk_client = FakeSDKClient(FakeCompletions(completion_response("{}")))
+    client = llm_modules.public.DeepSeekClient(sdk_client=sdk_client)
+
+    client.close()
+
+    assert sdk_client.close_calls == 1
 
 
 def test_missing_environment_key_is_rejected_before_sdk_construction(

@@ -64,11 +64,15 @@ class DiagnosisProviderResponseError(RuntimeError):
 
 
 class _LazyLLMClient:
-    """Delay provider imports and configuration until a retrieval hit generates."""
+    """Create one provider client on the first retrieval hit and own its lifetime."""
 
     def __init__(self, factory: LLMClientFactory) -> None:
         self._factory = factory
         self._client: LLMClient | None = None
+
+    @property
+    def initialized(self) -> bool:
+        return self._client is not None
 
     def generate(self, messages: Sequence[ChatMessage]) -> str:
         if self._client is None:
@@ -81,6 +85,13 @@ class _LazyLLMClient:
             return self._client.generate(messages)
         except Exception as exc:
             raise DiagnosisProviderResponseError from exc
+
+    def close(self) -> None:
+        client = self._client
+        self._client = None
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
 
 
 def _create_deepseek_client() -> LLMClient:
@@ -95,7 +106,7 @@ def get_graph_connection(request: Request) -> Any:
 
 
 def get_llm_client(request: Request) -> LLMClient:
-    return _LazyLLMClient(request.app.state.llm_client_factory)
+    return request.app.state.llm_client
 
 
 def get_diagnosis_lock(request: Request) -> Any:
@@ -112,15 +123,23 @@ def create_app(
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         graph_store = graph_store_factory()
+        llm_client = _LazyLLMClient(llm_client_factory)
         application.state.graph_store = graph_store
-        application.state.llm_client_factory = llm_client_factory
+        application.state.llm_client = llm_client
         application.state.diagnosis_lock = threading.Lock()
-        logger.info("diagnosis_service_started graph_store=ready")
+        logger.info("diagnosis_service_started graph_store=ready llm_client=lazy")
         try:
             yield
         finally:
-            graph_store.close()
-            logger.info("diagnosis_service_stopped graph_store=closed")
+            llm_was_initialized = llm_client.initialized
+            try:
+                llm_client.close()
+            finally:
+                graph_store.close()
+            logger.info(
+                "diagnosis_service_stopped graph_store=closed llm_client=%s",
+                "closed" if llm_was_initialized else "unused",
+            )
 
     application = FastAPI(
         title="Agri-Agents Diagnosis API",

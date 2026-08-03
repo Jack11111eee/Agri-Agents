@@ -27,12 +27,16 @@ class StubLLM:
     response: str = ""
     error: Exception | None = None
     calls: list[list[ChatMessage]] = field(default_factory=list)
+    close_calls: int = 0
 
     def generate(self, messages: Sequence[ChatMessage]) -> str:
         self.calls.append(list(messages))
         if self.error is not None:
             raise self.error
         return self.response
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 def grounded_response() -> str:
@@ -82,6 +86,29 @@ def test_post_diagnose_returns_stable_diagnosed_contract() -> None:
     assert llm.calls
     for relationship in payload["evidence_chain"]:
         assert {"source", "version", "confidence"} <= relationship["properties"].keys()
+
+
+def test_lifespan_reuses_and_closes_initialized_llm_client() -> None:
+    llm = StubLLM(response=grounded_response())
+    factory_calls = 0
+
+    def llm_factory() -> StubLLM:
+        nonlocal factory_calls
+        factory_calls += 1
+        return llm
+
+    application = create_app(llm_client_factory=llm_factory)
+    with TestClient(application) as client:
+        first = client.post("/diagnose", json={"symptoms": "叶片出现褐色病斑"})
+        second = client.post("/diagnose", json={"symptoms": "叶片出现褐色病斑"})
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert factory_calls == 1
+        assert len(llm.calls) == 2
+        assert llm.close_calls == 0
+
+    assert llm.close_calls == 1
 
 
 def test_post_diagnose_abstains_without_constructing_llm() -> None:

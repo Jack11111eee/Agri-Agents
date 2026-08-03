@@ -81,6 +81,12 @@ class DeepSeekClient:
             raise LLMResponseError("DeepSeek returned an empty completion")
         return content
 
+    def close(self) -> None:
+        """Release the underlying SDK transport and connection pool."""
+        close = getattr(self._sdk_client, "close", None)
+        if callable(close):
+            close()
+
     @staticmethod
     def _normalize_messages(messages: Sequence[ChatMessage]) -> list[dict[str, str]]:
         if not messages:
