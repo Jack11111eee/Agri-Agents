@@ -21,24 +21,24 @@ def test_live_deepseek_hit_is_grounded_to_retrieved_subgraph() -> None:
     query = "叶片出现褐色病斑"
 
     with load_seed_graph() as graph:
-        retrieval_result = retrieve(graph, query)
+        retrieval_result = retrieve(graph.connection, query)
         assert retrieval_result.is_hit
 
         allowed_entity_ids = {
-            node.entity_id for node in retrieval_result.subgraph.nodes
+            node.node_id for node in retrieval_result.subgraph.nodes
         }
         llm = DeepSeekClient()
         try:
-            result = diagnose(graph, query, llm)
+            result = diagnose(graph.connection, query, llm_client=llm)
         finally:
             llm.close()
 
     assert result.status is DiagnosisStatus.DIAGNOSED
     assert result.diagnosis is not None
-    assert result.diagnosis.reference_ids
-    assert set(result.diagnosis.reference_ids) <= allowed_entity_ids
+    assert result.diagnosis.referenced_entity_ids
+    assert set(result.diagnosis.referenced_entity_ids) <= allowed_entity_ids
 
+    assert result.model_suggestions
     for suggestion in result.model_suggestions:
-        assert suggestion.is_model_suggestion is True
-        assert suggestion.reference_ids
-        assert set(suggestion.reference_ids) <= allowed_entity_ids
+        assert suggestion.referenced_entity_ids
+        assert set(suggestion.referenced_entity_ids) <= allowed_entity_ids
