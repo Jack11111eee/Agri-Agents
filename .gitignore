@@ -3,6 +3,7 @@
 .env
 .env.*
 !.env.example
+AGENTS.md
 基于自进化知识图谱的农作物病虫害防治智能体系统.docx
 基于自进化知识图谱的农作物病虫害防治智能体系统.pdf
 
