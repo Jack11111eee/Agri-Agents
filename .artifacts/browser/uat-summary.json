@@ -1,0 +1,172 @@
+{
+  "checks": [
+    {
+      "name": "smoke_page_renders",
+      "passed": true,
+      "detail": "title=稻作诊断台, status=IDLE"
+    },
+    {
+      "name": "hit_diagnosed",
+      "passed": true,
+      "detail": "evidence_rows=3"
+    },
+    {
+      "name": "hit_evidence_rows",
+      "passed": true,
+      "detail": "count=3"
+    },
+    {
+      "name": "hit_evidence_columns",
+      "passed": true,
+      "detail": "headers=['关系', '实体路径', '来源', '版本', '置信度']"
+    },
+    {
+      "name": "hit_screenshot",
+      "passed": true,
+      "detail": "uat-hit.png"
+    },
+    {
+      "name": "abstain_state",
+      "passed": true,
+      "detail": "data-status=ABSTAINED"
+    },
+    {
+      "name": "invalid_state",
+      "passed": true,
+      "detail": "data-status=INVALID_INPUT"
+    },
+    {
+      "name": "all_post_200",
+      "passed": true,
+      "detail": "statuses=[200, 200, 200]"
+    },
+    {
+      "name": "three_state_field_stable",
+      "passed": true,
+      "detail": "fields=['diagnosis', 'evidence_chain', 'grounding_rejections', 'matched_symptoms', 'model_suggestions', 'reason', 'status', 'verified_knowledge']"
+    },
+    {
+      "name": "hit_grounded",
+      "passed": true,
+      "detail": "refs=['disease:rice-blast', 'control:rice-blast-resistant-variety', 'pesticide:tricyclazole'] out_of_graph=[]"
+    }
+  ],
+  "responses": {
+    "DIAGNOSED": {
+      "status": "DIAGNOSED",
+      "reason": "命中 1 个候选实体，匹配症状 1 个（阈值 1）",
+      "matched_symptoms": [
+        "叶片出现褐色病斑"
+      ],
+      "diagnosis": {
+        "text": "图谱匹配到可能相关病害：稻瘟病",
+        "referenced_entity_ids": [
+          "disease:rice-blast"
+        ]
+      },
+      "verified_knowledge": [
+        {
+          "id": "disease:rice-blast",
+          "type": "Disease",
+          "properties": {
+            "name": "稻瘟病",
+            "category": "病害",
+            "crop": "水稻"
+          }
+        },
+        {
+          "id": "symptom:rice-blast-brown-lesions",
+          "type": "Symptom",
+          "properties": {
+            "name": "叶片出现褐色病斑",
+            "crop": "水稻"
+          }
+        },
+        {
+          "id": "control:rice-blast-resistant-variety",
+          "type": "ControlMethod",
+          "properties": {
+            "name": "选用抗病品种并加强肥水管理",
+            "description": "结合品种抗性和田间管理降低病害发生风险。",
+            "crop": "水稻"
+          }
+        },
+        {
+          "id": "pesticide:tricyclazole",
+          "type": "Pesticide",
+          "properties": {
+            "name": "三环唑",
+            "active_ingredient": "三环唑",
+            "safety_note": "仅作种子图谱中的药剂实体；使用前必须核对当地登记标签、适用作物和安全间隔期。",
+            "crop": "水稻"
+          }
+        }
+      ],
+      "model_suggestions": [
+        {
+          "text": "图谱防治措施：选用抗病品种并加强肥水管理；结合品种抗性和田间管理降低病害发生风险。；图谱登记药剂：三环唑；有效成分：三环唑；安全提示：仅作种子图谱中的药剂实体；使用前必须核对当地登记标签、适用作物和安全间隔期。",
+          "referenced_entity_ids": [
+            "control:rice-blast-resistant-variety",
+            "pesticide:tricyclazole"
+          ],
+          "authoritative": false,
+          "label": "模型补充建议"
+        }
+      ],
+      "evidence_chain": [
+        {
+          "type": "HAS_SYMPTOM",
+          "source_id": "disease:rice-blast",
+          "target_id": "symptom:rice-blast-brown-lesions",
+          "properties": {
+            "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+            "version": "2024",
+            "confidence": 0.95
+          }
+        },
+        {
+          "type": "HAS_CONTROL",
+          "source_id": "disease:rice-blast",
+          "target_id": "control:rice-blast-resistant-variety",
+          "properties": {
+            "source": "全国农业技术推广服务中心《2024年水稻重大病虫害防控技术方案》",
+            "version": "2024",
+            "confidence": 0.91
+          }
+        },
+        {
+          "type": "RECOMMENDS_PESTICIDE",
+          "source_id": "control:rice-blast-resistant-variety",
+          "target_id": "pesticide:tricyclazole",
+          "properties": {
+            "source": "农业农村部农药登记信息与全国农业技术推广服务中心防控方案",
+            "version": "2024",
+            "confidence": 0.88
+          }
+        }
+      ],
+      "grounding_rejections": 0
+    },
+    "ABSTAINED": {
+      "status": "ABSTAINED",
+      "reason": "图谱中未找到与输入症状相匹配的事实",
+      "matched_symptoms": [],
+      "diagnosis": null,
+      "verified_knowledge": [],
+      "model_suggestions": [],
+      "evidence_chain": [],
+      "grounding_rejections": 0
+    },
+    "INVALID_INPUT": {
+      "status": "INVALID_INPUT",
+      "reason": "输入必须是非空文本",
+      "matched_symptoms": [],
+      "diagnosis": null,
+      "verified_knowledge": [],
+      "model_suggestions": [],
+      "evidence_chain": [],
+      "grounding_rejections": 0
+    }
+  },
+  "ok": true
+}
