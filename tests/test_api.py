@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.main import create_app
+from app.api.main import _LazyLLMClient, create_app
 from app.llm.protocol import ChatMessage
 
 EXPECTED_RESPONSE_FIELDS = {
@@ -176,6 +177,49 @@ def test_post_diagnose_rejects_oversized_symptoms_without_constructing_llm() -> 
     # before it reaches retrieval or the provider.
     assert response.status_code == 422
     assert factory_calls == 0
+
+
+def test_lazy_llm_client_constructs_once_under_concurrent_first_hits() -> None:
+    """MEDIUM-2b follow-up: narrowing the retrieval lock exposed lazy init.
+
+    With generate() no longer serialized by the retrieval lock, concurrent
+    first hits must not each build a client and orphan a transport. The
+    construction lock must keep factory calls at exactly one.
+    """
+
+    factory_calls = 0
+    factory_guard = threading.Lock()
+    start = threading.Barrier(8)
+
+    def slow_factory() -> StubLLM:
+        nonlocal factory_calls
+        with factory_guard:
+            factory_calls += 1
+        # Widen the race window so a missing lock would reliably double-build.
+        import time
+
+        time.sleep(0.02)
+        return StubLLM(response=grounded_response())
+
+    lazy = _LazyLLMClient(slow_factory)
+    errors: list[Exception] = []
+
+    def hit() -> None:
+        try:
+            start.wait(timeout=5)
+            lazy.generate([{"role": "user", "content": "x"}])
+        except Exception as exc:  # noqa: BLE001 - surfaced via assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hit) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert errors == []
+    assert factory_calls == 1
+    assert lazy.initialized is True
 
 
 def test_post_diagnose_reports_provider_configuration_failure() -> None:

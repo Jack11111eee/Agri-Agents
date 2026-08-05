@@ -76,20 +76,29 @@ class _LazyLLMClient:
     def __init__(self, factory: LLMClientFactory) -> None:
         self._factory = factory
         self._client: LLMClient | None = None
+        # Guards lazy construction only. The retrieval lock no longer wraps
+        # generate(), so concurrent first hits could otherwise each build a
+        # client and orphan one transport; this serializes construction while
+        # leaving concurrent generate() calls unserialized (SDK is safe).
+        self._construct_lock = threading.Lock()
 
     @property
     def initialized(self) -> bool:
         return self._client is not None
 
     def generate(self, messages: Sequence[ChatMessage]) -> str:
-        if self._client is None:
-            try:
-                self._client = self._factory()
-            except Exception as exc:
-                raise DiagnosisProviderUnavailableError from exc
+        client = self._client
+        if client is None:
+            with self._construct_lock:
+                if self._client is None:
+                    try:
+                        self._client = self._factory()
+                    except Exception as exc:
+                        raise DiagnosisProviderUnavailableError from exc
+                client = self._client
 
         try:
-            return self._client.generate(messages)
+            return client.generate(messages)
         except Exception as exc:
             raise DiagnosisProviderResponseError from exc
 
