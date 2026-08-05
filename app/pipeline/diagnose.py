@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping, Sequence
@@ -96,6 +97,7 @@ def diagnose(
     symptom_text: object,
     *,
     llm_client: LLMClient | None = None,
+    connection_lock: AbstractContextManager[Any] | None = None,
 ) -> DiagnosisResult:
     """Retrieve evidence, short-circuit abstention, and render graph-only text.
 
@@ -104,6 +106,10 @@ def diagnose(
     every suggestion string are rendered here from stored subgraph properties.
     Provider and retrieval failures deliberately bubble so callers never receive
     model content disguised as a successful partial diagnosis.
+
+    ``connection_lock`` guards only the non-thread-safe Kuzu retrieval. It is
+    deliberately released before the provider network call so a single hit
+    cannot hold every other request behind a multi-second LLM round trip.
     """
 
     if not isinstance(symptom_text, str) or not symptom_text.strip():
@@ -112,7 +118,8 @@ def diagnose(
             reason="输入必须是非空文本",
         )
 
-    retrieval = retrieve(connection, symptom_text)
+    with connection_lock if connection_lock is not None else nullcontext():
+        retrieval = retrieve(connection, symptom_text)
     if retrieval.status is RetrievalStatus.ABSTAIN:
         return DiagnosisResult(
             status=DiagnosisStatus.ABSTAINED,

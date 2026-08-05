@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -285,3 +286,65 @@ def test_pipeline_import_does_not_load_provider_sdk():
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_connection_lock_is_released_before_the_llm_call(graph):
+    """MEDIUM-2b: the retrieval lock must not be held across the network call.
+
+    If the lock still wrapped the provider round trip, a single hit would block
+    every other diagnosis for the LLM's multi-second timeout. We prove release
+    by re-acquiring the same lock non-blocking from inside generate().
+    """
+
+    lock = threading.Lock()
+    lock_free_during_generate: dict[str, bool] = {}
+
+    class LockProbingLLM:
+        def generate(self, messages: Sequence[ChatMessage]) -> str:
+            acquired = lock.acquire(blocking=False)
+            lock_free_during_generate["free"] = acquired
+            if acquired:
+                lock.release()
+            return llm_json()
+
+    result = diagnose(
+        graph.connection,
+        "叶片出现褐色病斑",
+        llm_client=LockProbingLLM(),
+        connection_lock=lock,
+    )
+
+    assert result.status is DiagnosisStatus.DIAGNOSED
+    assert lock_free_during_generate["free"] is True
+    # The pipeline must leave the caller-owned lock released after returning.
+    assert lock.acquire(blocking=False) is True
+    lock.release()
+
+
+def test_connection_lock_guards_retrieval(monkeypatch):
+    """MEDIUM-2b: retrieval itself must run while the lock is held."""
+
+    import app.pipeline.diagnose  # noqa: F401  (ensure submodule is imported)
+
+    diagnose_module = sys.modules["app.pipeline.diagnose"]
+
+    lock = threading.Lock()
+    held_during_retrieval = {}
+
+    def fake_retrieve(connection, symptom_text, **kwargs):
+        held_during_retrieval["locked"] = lock.acquire(blocking=False) is False
+        return retrieve(connection, symptom_text, **kwargs)
+
+    store = load_seed_graph()
+    try:
+        monkeypatch.setattr(diagnose_module, "retrieve", fake_retrieve)
+        diagnose(
+            store.connection,
+            "叶片出现褐色病斑",
+            llm_client=StubLLM(response=llm_json()),
+            connection_lock=lock,
+        )
+    finally:
+        store.close()
+
+    assert held_during_retrieval["locked"] is True

@@ -26,10 +26,17 @@ GraphStoreFactory = Callable[[], GraphStore]
 LLMClientFactory = Callable[[], LLMClient]
 
 
+# Server-side cap on symptom length. A localhost demo needs no huge inputs;
+# this bounds graph-scan cost and provider token cost. Blank/whitespace is
+# intentionally NOT rejected here so it still yields the INVALID_INPUT state
+# (three-state contract) rather than a 422.
+MAX_SYMPTOM_LENGTH = 2000
+
+
 class DiagnoseRequest(BaseModel):
     """Stable request body for POST /diagnose."""
 
-    symptoms: Annotated[str, Field(strict=True)]
+    symptoms: Annotated[str, Field(strict=True, max_length=MAX_SYMPTOM_LENGTH)]
 
 
 class DiagnosisStatementResponse(BaseModel):
@@ -159,14 +166,15 @@ def create_app(
         diagnosis_lock: Annotated[Any, Depends(get_diagnosis_lock)],
     ) -> dict[str, object]:
         try:
-            # Kuzu connection sharing is intentionally serialized for the
-            # single-process demo until a concurrent connection policy exists.
-            with diagnosis_lock:
-                result = diagnose(
-                    connection,
-                    payload.symptoms,
-                    llm_client=llm_client,
-                )
+            # The lock guards only the non-thread-safe Kuzu retrieval inside
+            # diagnose(); it is released before the LLM network call so one hit
+            # cannot block every other request behind a multi-second round trip.
+            result = diagnose(
+                connection,
+                payload.symptoms,
+                llm_client=llm_client,
+                connection_lock=diagnosis_lock,
+            )
         except DiagnosisProviderUnavailableError as exc:
             root_error = exc.__cause__ or exc
             logger.error(

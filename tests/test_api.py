@@ -160,6 +160,24 @@ def test_post_diagnose_uses_422_for_malformed_request_body() -> None:
     assert wrong_type.status_code == 422
 
 
+def test_post_diagnose_rejects_oversized_symptoms_without_constructing_llm() -> None:
+    factory_calls = 0
+
+    def forbidden_factory() -> StubLLM:
+        nonlocal factory_calls
+        factory_calls += 1
+        raise AssertionError("oversized request constructed an LLM client")
+
+    application = create_app(llm_client_factory=forbidden_factory)
+    with TestClient(application) as client:
+        response = client.post("/diagnose", json={"symptoms": "症" * 2001})
+
+    # MEDIUM-2a: an unbounded symptom string must be rejected server-side
+    # before it reaches retrieval or the provider.
+    assert response.status_code == 422
+    assert factory_calls == 0
+
+
 def test_post_diagnose_reports_provider_configuration_failure() -> None:
     def failing_factory() -> StubLLM:
         raise RuntimeError("provider configuration failed")
